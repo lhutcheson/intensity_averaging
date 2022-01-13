@@ -4,13 +4,25 @@ import os
 from argparse import ArgumentParser as AP
 
 
-class DataFile(pd.DataFrame):
-    def __init__(self, path, *args, **kwargs):
+class DipoleFile(pd.DataFrame):
+    """ Class for handling data file of time-dependent expectation value of the
+    dipole (d(t)). In particular, this class handles harvesting the data from
+    file, santitising the data, and fourier transforming it to give the harmonic
+    spectrum. Paramter "form" corresponds either to "v" velocity form, or "l"
+    length form of the dipole.
+    """
+
+    def __init__(self, path, form="v", *args, **kwargs):
         super().__init__(self._harvest(path))
         self.path = os.path.realpath(path)
         self.name = path.split("/")[-1]
         self.xstep = self.iloc[1, 0] - self.iloc[0, 0]
         self.len = len(self.iloc[:, 0])
+        self.intensities()  # sets peak_intensity
+        if form == "v":
+            self.scalefactor = 2
+        else:
+            self.scalefactor = 4
 
     def _harvest(self, path):
         """ Given the name of a file to read, harvest will read the data, return
@@ -26,13 +38,13 @@ class DataFile(pd.DataFrame):
 
         return (pd.read_csv(path, header=head))
 
-    def _rescaleY(self, X, Y):
-        """ Given the HHS from the dipole velocity or dipole length data, rescale it by
-        omega^2 or omega^4 respectively to match the dipole acceleration"""
-        if self.name.startswith("expec_v"):
-            return Y*X*X
-        elif self.name.startswith("expec_z"):
-            return Y*X**4
+    def _intensities(self):
+        """Gets the intensities used from the .csv file, units 10^14 Wcm^-2"""
+        intens = [float(x) for x in self.columns[1:]]
+        intens.sort(reverse=True)  # ensures descending order
+        intens = np.array(intensities)
+        self.peak_intensity = np.amax(intensities)
+        return intens
 
     def _FFT(self, blackman=True, pad=8):
         """Apply a blackman window to all data columns, pad the data with
@@ -53,16 +65,6 @@ class DataFile(pd.DataFrame):
 
         return df
 
-    def HHG(self):
-        """Calculate the HHG spectrum"""
-        df = self._FFT()
-        X = df["Freq"]
-        for col in df.columns[1:]:
-            ydat = df[col]
-            tmpdf = pd.DataFrame({col: ydat})
-            df.update(tmpdf)
-        return df
-
     def _pad_with_zeros(self, ydat, factor=8):
         """ pad ydat with zeros so that the length of ydat is a power of 2 and
         at least factor times the length of ydat on input."""
@@ -75,6 +77,64 @@ class DataFile(pd.DataFrame):
         post = numzeros//2
         return np.concatenate([np.zeros(pre), np.transpose(ydat),
                                np.zeros(post)])
+
+    def peakHHG(self):
+        df = self._FFT()
+        col = df.columns[1]
+        amplitude = np.real(np.abs(df[col])**2)
+        amplitude = amplitude * df["Freq"]**self.scalefactor
+        df["Freq"] *= 27.212  # convert frequency to eV
+        newdf = df[["Freq", col]]
+        return newdf
+
+    def _weights(I, I0, w0):
+        "calculate the weights for gaussian laser beam in 2D configuration"
+        weights = (np.pi*w0**2)/(2*I)
+        weights[0] *= 0.5
+        weights[-1] *= 0.5
+        return weights
+
+    def _phase(I, I0, w, w0, d=25):
+        d *= 10**7  # convert from mm to nm
+        w0 *= 10**6  # convert from mm to nm
+        return (I/I0)**((1j*w0**2*w)/(4*d))
+
+    def intensityAveragedHHG(self, focus=1, d=25, phase=True, stride=1,
+                             I_min=None):
+        self._select(I_min)
+        df = self._FFT()
+        w = df["Freq"]
+        w0 = np.sqrt(focus/np.pi)  # beam radius
+        intensities = self._intensities()[::stride]
+        dI = intensities[0] - intensities[1]
+        weights = self._weights(intensities, self.peak_intensity, w0)
+        summed = 0
+        for col, intensity, weight in zip(
+                df.columns[1::stride], intensities, weights):
+            if phase:
+                phase_factor = self._phase(intensity, peak_intensity, w, w0, d)
+            else:
+                phase_factor = 1.0
+            summed += phase_factor * weight * dI * df[col]
+        if phase:
+            pre_factor = (1j*w)/(2*np.pi*d*10**7)
+        else:
+            pre_factor = 1.0
+        avg = np.real(np.abs(pre_factor*summed)**2)*w**self.scalefactor
+        newdf = pd.DataFrame({"Freq": w*27.212, "0001_z": avg})
+        return newdf
+
+    def _select(self, minimum_intensity):
+        """If a minimum intensity threshold is set, drop all columns in the
+        DipoleFile which correspond to intensities lower than this threshold"""
+        if minimum_intensity:
+            # Get intensity corresponding to percentage of peak
+            I_min = self.peak_intensity*args["minimum_intensity"]
+            # truncate dataframe
+            for col in self.columns[1:]:
+                columnIntensity = float(col)
+                if columnIntensity < I_min:
+                    self.drop(col, axis=1, inplace=True)
 
 # --------------------------------------------------------------------------------
 
@@ -89,131 +149,48 @@ def read_command_line():
                         help='change minimum intensity to use in '
                         'average, given as percentage of peak intensity, '
                         'rather than use all intensities in file')
-    parser.add_argument('-di', '--delta_intensity', action='store_true',
-                        help='option to calculate several averages '
-                        'using various different values of delta I')
-    parser.add_argument('-w', '--omega_0', action='store_true',
-                        help='option to calculate several averages '
-                        'using various different beam radii')
     return vars(parser.parse_args())
 
 # --------------------------------------------------------------------------------
 
 
-def get_intensities(df):
-    "Gets the intensities used from the .csv file"
-    intensities = np.array([float(x) for x in df.columns[1:]])
-    peak_intensity = np.amax(intensities)
-    return peak_intensity, intensities
-
-
-def get_weights(I, I0, w0):
-    "calculate the weights for gaussian laser beam in 2D configuration"
-    return (np.pi*w0**2)/(2*I)
-
-
-def phase(I, I0, w, w0, d=25):
-    d *= 10**7  # convert from mm to nm
-    w0 *= 10**6  # convert from mm to nm
-    return (I/I0)**((1j*w0**2*w)/(4*d))
-
-
-# --------------------------------------------------------------------------------
 args = read_command_line()
+I_min = args["minimum_intensity"]
 
-df = DataFile(args['dipoleFile'])
-peak_intensity, intensities = get_intensities(df)
-dI = intensities[0]-intensities[1]
+df = DipoleFile(args['dipoleFile'])
 
-if args["minimum_intensity"]:
-    # Get intensity corresponding to percentage of peak
-    I_min = peak_intensity*args["minimum_intensity"]
-    # Get intensity column corresponding to I_min at which to truncate
-    I_trunc = intensities[np.abs(intensities-I_min).argmin()]
-    df = df.truncate(before=str(I_trunc), after=None,
-                     axis=1)  # truncate dataframe
-
-vph = df.HHG()
 
 # Write peak intensity spectra to file
-# assumes peak intensity is first in csv file - generalise?
-single = np.real(np.abs(vph.iloc[:, 1])**2)
-single = df._rescaleY(vph["Freq"].values, single)
+single = df.peakHHG()
+single.to_csv("single_peak.csv", index=False)
 
-peak_hs = pd.DataFrame({"Freq": vph["Freq"].values*27.212, "0001_z": single})
-peak_hs.to_csv("single_peak.csv", index=False)
 
 # Loop over several different laser focal areas
 areas = [0.01, 0.1, 1.5]
 for area in areas:
-    w0 = np.sqrt(area/np.pi)  # beam radius
-    weights = get_weights(intensities, peak_intensity, w0)
-    weights[-1] *= 0.5
-    weights[0] *= 0.5
-    vph = df.HHG()
-
-    averaged_data_naive = 0
-    averaged_data_full = 0
-
-    for col, intensity, weight in zip(vph.columns[1:], intensities, weights):
-        phase_factor = phase(intensity, peak_intensity, vph['Freq'].values, w0)
-        averaged_data_naive += vph[col]*weight*dI
-        averaged_data_full += vph[col]*phase_factor*weight*dI
-
-    nc_avg = np.real(np.abs(averaged_data_naive)**2)
-    nc_avg = df._rescaleY(vph["Freq"].values, nc_avg)
-
-    # coherent phase weighted average
-    fc_avg = np.real(
-        np.abs((1j*vph["Freq"].values/(2*np.pi*25*10**7))*averaged_data_full)**2)
-    fc_avg = df._rescaleY(vph["Freq"].values, fc_avg)
 
     # Write naive coherent average to file
-    n_coh = pd.DataFrame({"Freq": vph["Freq"].values*27.212, "0001_z": nc_avg})
-    n_coh.to_csv("naive_coherent_area_"+str(area)+"_step_" +
-                 str(round(dI, 3))+".csv", index=False)
+    n_coh = df.intensityAveragedHHG(focus=area, d=25, phase=False, I_min=I_min)
+    n_coh.to_csv(f"naive_coherent_area_{area}_step_1)}.csv",
+                 index=False)
 
     # Write full coherent average to file
-    f_coh = pd.DataFrame({"Freq": vph["Freq"].values*27.212, "0001_z": fc_avg})
-    f_coh.to_csv("full_coherent_area_"+str(area)+"_step_" +
-                 str(round(dI, 3))+".csv", index=False)
+    f_coh = df.intensityAveragedHHG(focus=area, d=25, phase=True, I_min=I_min)
+    f_coh.to_csv(f"full_coherent_area_{area}_step_1}.csv",
+                 index=False)
 
 
 # Changing intensity step 2x bigger, 5x bigger, 10x bigger
-for i in [2, 5, 10]:
-    ndf = vph.iloc[:, 1::i]
-    peak_intensity, intensities = get_intensities(df.iloc[:, 1::i])
-    dI = intensities[0]-intensities[1]
+for stride in [2, 5, 10]:
+    df = DipoleFile(args['dipoleFile'])
 
-    area = 0.1  # area of laser focus
-    w0 = np.sqrt(area/np.pi)  # beam radius
-
-    weights = get_weights(intensities, peak_intensity, w0)
-    weights[-1] *= 0.5
-    weights[0] *= 0.5
-
-    averaged_data_naive = 0
-    averaged_data_full = 0
-
-    for col, intensity, weight in zip(ndf.columns, intensities, weights):
-        phase_factor = phase(intensity, peak_intensity, vph['Freq'].values, w0)
-        averaged_data_naive += ndf[col]*weight*dI
-        averaged_data_full += ndf[col]*phase_factor*weight*dI
-
-    nc_avg = np.real(np.abs(averaged_data_naive)**2)
-    nc_avg = df._rescaleY(vph["Freq"].values, nc_avg)
-
-    # coherent phase weighted average
-    fc_avg = np.real(
-        np.abs((1j*vph["Freq"].values/(2*np.pi*25*10**7))*averaged_data_full)**2)
-    fc_avg = df._rescaleY(vph["Freq"].values, fc_avg)
-
-    # Write naive coherent average to file
-    n_coh = pd.DataFrame({"Freq": vph["Freq"].values*27.212, "0001_z": nc_avg})
-    n_coh.to_csv("naive_coherent_area_"+str(area)+"_step_" +
-                 str(round(dI, 3))+".csv", index=False)
+    n_coh = df.intensityAveragedHHG(focus=0.1, d=25, phase=False, I_min=I_min,
+                                    stride=stride)
+    n_coh.to_csv(f"naive_coherent_area_{area}_step_{stride}.csv",
+                 index=False)
 
     # Write full coherent average to file
-    f_coh = pd.DataFrame({"Freq": vph["Freq"].values*27.212, "0001_z": fc_avg})
-    f_coh.to_csv("full_coherent_area_"+str(area)+"_step_" +
-                 str(round(dI, 3))+".csv", index=False)
+    f_coh = df.intensityAveragedHHG(focus=0.1, d=25, phase=True, I_min=I_min,
+                                    stride=stride)
+    f_coh.to_csv(f"full_coherent_area_{area}_step_{stride}.csv",
+                 index=False)
