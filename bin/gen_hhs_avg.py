@@ -18,7 +18,7 @@ class DipoleFile(pd.DataFrame):
         self.name = path.split("/")[-1]
         self.xstep = self.iloc[1, 0] - self.iloc[0, 0]
         self.len = len(self.iloc[:, 0])
-        self.intensities()  # sets peak_intensity
+        self._intensities()  # sets peak_intensity
         if form == "v":
             self.scalefactor = 2
         else:
@@ -42,24 +42,27 @@ class DipoleFile(pd.DataFrame):
         """Gets the intensities used from the .csv file, units 10^14 Wcm^-2"""
         intens = [float(x) for x in self.columns[1:]]
         intens.sort(reverse=True)  # ensures descending order
-        intens = np.array(intensities)
-        self.peak_intensity = np.amax(intensities)
+        intens = np.array(intens)
+        self.peak_intensity = np.amax(intens)
         return intens
 
-    def _FFT(self, blackman=True, pad=8):
+    def _FFT(self, blackman=True, pad=8, collim=None):
         """Apply a blackman window to all data columns, pad the data with
         leading zeros so that it is of length 2**pad, take fourier transform
         of the windowed input data, return DataFrame with transformed data"""
         df = pd.DataFrame()
-        for col in self.columns[1:]:
-            colname = "FT"+col
+        if collim is None:
+            collist = self.columns[1:]
+        else:
+            collist = self.columns[1:collim+1]
+        for col in collist:
             ydat = self[col]
             if blackman:
                 ydat = np.blackman(self.len)*ydat
             if pad:
                 ydat = self._pad_with_zeros(ydat, factor=pad)
             Y = (np.fft.fft(ydat))[:len(ydat)//2]
-            df[colname] = Y
+            df[col] = Y
         X = np.arange(len(Y))*(((np.pi)/len(Y))/self.xstep)
         df.insert(0, "Freq", X)
 
@@ -79,22 +82,23 @@ class DipoleFile(pd.DataFrame):
                                np.zeros(post)])
 
     def peakHHG(self):
-        df = self._FFT()
+        df = self._FFT(collim=1)
         col = df.columns[1]
-        amplitude = np.real(np.abs(df[col])**2)
+        amplitude = np.real(np.abs(df[col].values)**2)
         amplitude = amplitude * df["Freq"]**self.scalefactor
         df["Freq"] *= 27.212  # convert frequency to eV
+        df[col] = amplitude
         newdf = df[["Freq", col]]
         return newdf
 
-    def _weights(I, I0, w0):
+    def _weights(self, I, I0, w0):
         "calculate the weights for gaussian laser beam in 2D configuration"
         weights = (np.pi*w0**2)/(2*I)
         weights[0] *= 0.5
         weights[-1] *= 0.5
         return weights
 
-    def _phase(I, I0, w, w0, d=25):
+    def _phase(self, I, I0, w, w0, d=25):
         d *= 10**7  # convert from mm to nm
         w0 *= 10**6  # convert from mm to nm
         return (I/I0)**((1j*w0**2*w)/(4*d))
@@ -112,7 +116,8 @@ class DipoleFile(pd.DataFrame):
         for col, intensity, weight in zip(
                 df.columns[1::stride], intensities, weights):
             if phase:
-                phase_factor = self._phase(intensity, peak_intensity, w, w0, d)
+                phase_factor = self._phase(
+                    intensity, self.peak_intensity, w, w0, d)
             else:
                 phase_factor = 1.0
             summed += phase_factor * weight * dI * df[col]
@@ -164,6 +169,8 @@ df = DipoleFile(args['dipoleFile'])
 single = df.peakHHG()
 single.to_csv("single_peak.csv", index=False)
 
+import sys
+sys.exit()
 
 # Loop over several different laser focal areas
 areas = [0.01, 0.1, 1.5]
@@ -171,12 +178,12 @@ for area in areas:
 
     # Write naive coherent average to file
     n_coh = df.intensityAveragedHHG(focus=area, d=25, phase=False, I_min=I_min)
-    n_coh.to_csv(f"naive_coherent_area_{area}_step_1)}.csv",
+    n_coh.to_csv(f"naive_coherent_area_{area}_step_1.csv",
                  index=False)
 
     # Write full coherent average to file
     f_coh = df.intensityAveragedHHG(focus=area, d=25, phase=True, I_min=I_min)
-    f_coh.to_csv(f"full_coherent_area_{area}_step_1}.csv",
+    f_coh.to_csv(f"full_coherent_area_{area}_step_1.csv",
                  index=False)
 
 
@@ -186,11 +193,11 @@ for stride in [2, 5, 10]:
 
     n_coh = df.intensityAveragedHHG(focus=0.1, d=25, phase=False, I_min=I_min,
                                     stride=stride)
-    n_coh.to_csv(f"naive_coherent_area_{area}_step_{stride}.csv",
+    n_coh.to_csv(f"naive_coherent_area_0.1_step_{stride}.csv",
                  index=False)
 
     # Write full coherent average to file
     f_coh = df.intensityAveragedHHG(focus=0.1, d=25, phase=True, I_min=I_min,
                                     stride=stride)
-    f_coh.to_csv(f"full_coherent_area_{area}_step_{stride}.csv",
+    f_coh.to_csv(f"full_coherent_area_0.1_step_{stride}.csv",
                  index=False)
