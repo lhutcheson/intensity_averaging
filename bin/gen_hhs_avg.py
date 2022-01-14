@@ -169,9 +169,6 @@ df = DipoleFile(args['dipoleFile'])
 single = df.peakHHG()
 single.to_csv("single_peak.csv", index=False)
 
-import sys
-sys.exit()
-
 # Loop over several different laser focal areas
 areas = [0.01, 0.1, 1.5]
 for area in areas:
