@@ -7,15 +7,16 @@ from argparse import ArgumentParser as AP
 class DipoleFile(pd.DataFrame):
     """ Class for handling data file of time-dependent expectation value of the
     dipole (d(t)). In particular, this class handles harvesting the data from
-    file, santitising the data, and fourier transforming it to give the harmonic
-    spectrum. Paramter "form" corresponds either to "v" velocity form, or "l"
-    length form of the dipole.
+    file or existing pandas dataFrame, santitising the data, and fourier
+    transforming it to give the harmonic spectrum. Parameter "form" corresponds
+    either to "v" velocity form, or "l" length form of the dipole.
     """
 
-    def __init__(self, path, form="v", *args, **kwargs):
-        super().__init__(self._harvest(path))
-        self.path = os.path.realpath(path)
-        self.name = path.split("/")[-1]
+    def __init__(self, path=None, dF=None, form="v", *args, **kwargs):
+        if dF:
+            super().__init__(dF)
+        elif path:
+            super().__init__(self._harvest(path))
         self.xstep = self.iloc[1, 0] - self.iloc[0, 0]
         self.len = len(self.iloc[:, 0])
         self._intensities()  # sets peak_intensity
@@ -26,7 +27,7 @@ class DipoleFile(pd.DataFrame):
 
     def _harvest(self, path):
         """ Given the name of a file to read, harvest will read the data, return
-        the column headers, and the (multicolumn) data as a numpy ndarray"""
+        the column headers, and the (multicolumn) data as a pandas DataFrame"""
         with open(path, 'r') as f:
             toprow = f.readline()
             try:
@@ -158,43 +159,44 @@ def read_command_line():
 
 # --------------------------------------------------------------------------------
 
+if __name__ == "__main__":
 
-args = read_command_line()
-I_min = args["minimum_intensity"]
+    args = read_command_line()
+    I_min = args["minimum_intensity"]
 
-df = DipoleFile(args['dipoleFile'])
+    df = DipoleFile(args['dipoleFile'])
 
 
 # Write peak intensity spectra to file
-single = df.peakHHG()
-single.to_csv("single_peak.csv", index=False)
+    single = df.peakHHG()
+    single.to_csv("single_peak.csv", index=False)
 
 # Loop over several different laser focal areas
-areas = [0.01, 0.1, 1.5]
-for area in areas:
+    areas = [0.01, 0.1, 1.5]
+    for area in areas:
 
-    # Write naive coherent average to file
-    n_coh = df.intensityAveragedHHG(focus=area, d=25, phase=False, I_min=I_min)
-    n_coh.to_csv(f"naive_coherent_area_{area}_step_1.csv",
-                 index=False)
+        # Write naive coherent average to file
+        n_coh = df.intensityAveragedHHG(focus=area, d=25, phase=False, I_min=I_min)
+        n_coh.to_csv(f"naive_coherent_area_{area}_step_1.csv",
+                     index=False)
 
-    # Write full coherent average to file
-    f_coh = df.intensityAveragedHHG(focus=area, d=25, phase=True, I_min=I_min)
-    f_coh.to_csv(f"full_coherent_area_{area}_step_1.csv",
-                 index=False)
+        # Write full coherent average to file
+        f_coh = df.intensityAveragedHHG(focus=area, d=25, phase=True, I_min=I_min)
+        f_coh.to_csv(f"full_coherent_area_{area}_step_1.csv",
+                     index=False)
 
 
 # Changing intensity step 2x bigger, 5x bigger, 10x bigger
-for stride in [2, 5, 10]:
-    df = DipoleFile(args['dipoleFile'])
+    for stride in [2, 5, 10]:
+        df = DipoleFile(args['dipoleFile'])
 
-    n_coh = df.intensityAveragedHHG(focus=0.1, d=25, phase=False, I_min=I_min,
-                                    stride=stride)
-    n_coh.to_csv(f"naive_coherent_area_0.1_step_{stride}.csv",
-                 index=False)
+        n_coh = df.intensityAveragedHHG(focus=0.1, d=25, phase=False, I_min=I_min,
+                                        stride=stride)
+        n_coh.to_csv(f"naive_coherent_area_0.1_step_{stride}.csv",
+                     index=False)
 
-    # Write full coherent average to file
-    f_coh = df.intensityAveragedHHG(focus=0.1, d=25, phase=True, I_min=I_min,
-                                    stride=stride)
-    f_coh.to_csv(f"full_coherent_area_0.1_step_{stride}.csv",
-                 index=False)
+        # Write full coherent average to file
+        f_coh = df.intensityAveragedHHG(focus=0.1, d=25, phase=True, I_min=I_min,
+                                        stride=stride)
+        f_coh.to_csv(f"full_coherent_area_0.1_step_{stride}.csv",
+                     index=False)
