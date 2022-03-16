@@ -104,18 +104,19 @@ class DipoleFile(pd.DataFrame):
         w0 *= 10**6  # convert from mm to nm
         return (I/I0)**((1j*w0**2*w)/(4*d))
 
-    def _detector(self, R_detect, I, I0, w0, d=25, L=10):
+    def _detector(self, R_detect, I, I0, w0, d=25, w=np.array([4.55949])):
         """Account for the different detection points, R_detect, of the detector"""
         import scipy.special as sp
 
         R_detect *= 10**6  # convert from mm to nm
         w0 *= 10**6  # convert from mm to nm
         d *= 10**7  # convert from cm to nm
+        L = 45.5949/w # convert omega in a.u to wavelength in nm
 
         r_sq = -0.5*w0**2*np.log(I/I0)
 
         a = (-2*np.pi*np.sqrt(r_sq)*R_detect)/(d*L)
-        a = abs(round(a))
+        a = round(max(abs(a)))
         pre_factor = np.exp((np.pi*1j*(R_detect**2 + r_sq))/(d*L))
 
         term =0
@@ -125,8 +126,8 @@ class DipoleFile(pd.DataFrame):
         return 2*pre_factor*term
 
 
-    def intensityAveragedHHG(self, focus=0.1, d=25, R_detect=None, L=10, phase=True, stride=1,
-                             I_min=None):
+    def intensityAveragedHHG(self, focus=0.1, d=25, R_detect=None,
+                             phase=True, stride=1, I_min=None):
         self._select(I_min)
         df = self._FFT()
         w = df["Freq"]
@@ -148,7 +149,7 @@ class DipoleFile(pd.DataFrame):
                         intensity, self.peak_intensity, w, w0, d)
 
                     detector_factor = self._detector(
-                        radius, intensity, self.peak_intensity, w0, d, L)
+                        radius, intensity, self.peak_intensity, w0, d, w)
 
                     int_summed += detector_factor * phase_factor * weight * dI * df[col]
                 
