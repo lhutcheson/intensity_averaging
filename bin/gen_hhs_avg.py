@@ -3,6 +3,7 @@ import numpy as np
 import os
 from argparse import ArgumentParser as AP
 import matplotlib.pyplot as plt
+from joblib import Parallel, delayed
 
 
 class DipoleFile(pd.DataFrame):
@@ -94,7 +95,7 @@ class DipoleFile(pd.DataFrame):
         return newdf
 
     def _weights(self, I, I0, w0):
-        "calculate the weights for gaussian laser beam in 2D configuration"
+        """calculate the weights for gaussian laser beam in 2D configuration"""
         weights = (np.pi*w0**2)/(2*I)
         weights[0] *= 0.5
         weights[-1] *= 0.5
@@ -126,8 +127,25 @@ class DipoleFile(pd.DataFrame):
 
         return 2*pre_factor*term
 
+    def gen_radius_contribution(self, radius, df, stride, intensities, weights, I0, w, w0, d=25):
+        """calculate the contribution for the different detection points, R_detect, of the detector"""
+        dI = intensities[1]-intensities[0]
+        int_summed = 0
+        for col, intensity, weight in zip(
+            df.columns[1::stride], intensities, weights):
+            phase_factor = self._phase(
+                intensity, I0, w, w0, d)
+            detector_factor = self._detector(
+                radius, intensity, I0, w0, d, w)
+            int_summed += detector_factor * phase_factor * weight * dI * df[col]
+        
+        pre_factor = (1j*w)/(2*np.pi*d*10**7)
+        int_summed *= pre_factor
+        
+        return int_summed
 
-    def intensityAveragedHHG(self, focus=0.1, d=25, R_detect=None,
+
+    def intensityAveragedHHG(self, no_cores, focus=0.1, d=25, R_detect=None,
                              phase=True, stride=1, I_min=None):
         self._select(I_min)
         df = self._FFT()
@@ -136,34 +154,18 @@ class DipoleFile(pd.DataFrame):
         intensities = self._intensities()[::stride]
         dI = intensities[0] - intensities[1]
         weights = self._weights(intensities, self.peak_intensity, w0)
-
+        peak = self.peak_intensity
         if R_detect:
-            rad_avg = pd.DataFrame()
-            rad_avg['Freq'] = w*27.212
             rad_summed = 0
-            incoh_avg =0
-            for radius in np.arange(0.0001,R_detect+1e-06,1e-06):
-                int_summed = 0
-                for col, intensity, weight in zip(
-                    df.columns[1::stride], intensities, weights):
-                    phase_factor = self._phase(
-                        intensity, self.peak_intensity, w, w0, d)
 
-                    detector_factor = self._detector(
-                        radius, intensity, self.peak_intensity, w0, d, w)
+            radiuses = np.arange(0.0001,R_detect+1e-06,1e-06)
+            radius_contributions = Parallel(n_jobs=no_cores)(delayed(self.gen_radius_contribution)(radius, df, stride, intensities, weights, peak, w, w0) for radius in radiuses)
+            
+            coh_avg = np.real(np.abs(sum(radius_contributions))**2)*w**self.scalefactor
+            incoh_avg = sum(np.real(np.abs(cont)**2)*w**self.scalefactor for cont in radius_contributions)
 
-                    int_summed += detector_factor * phase_factor * weight * dI * df[col]
-                
-                if phase:
-                    pre_factor = (1j*w)/(2*np.pi*d*10**7)
-                else:
-                    pre_factor = 1.0
+            rad_avg = pd.DataFrame({"Freq": w*27.212, "incoh_avg": incoh_avg, "coh_avg": coh_avg})
 
-                int_summed *= pre_factor
-                rad_summed+=int_summed
-                incoh_avg+=np.real(np.abs(int_summed)**2)*w**self.scalefactor
-            rad_avg['incoh_avg'] = incoh_avg
-            rad_avg['coh_avg'] = np.real(np.abs(rad_summed)**2)*w**self.scalefactor
             return rad_avg
 
         else:
@@ -216,6 +218,9 @@ def read_command_line():
                         help='change minimum intensity to use in '
                         'average, given as percentage of peak intensity, '
                         'rather than use all intensities in file')
+    parser.add_argument('-p', '--parallel', type=int, default=1,
+                        help='option to run the code in parallel'
+                        'and select the number of cores used')
     return vars(parser.parse_args())
 
 # --------------------------------------------------------------------------------
@@ -223,50 +228,51 @@ def read_command_line():
 if __name__ == "__main__":
     args = read_command_line()
     I_min = args["minimum_intensity"]
+    no_cores = args['parallel']
 
     df = DipoleFile(args['dipoleFile'])
 
 
 # Write peak intensity spectra to file
-    single = df.peakHHG()
-    single.to_csv("single_peak.csv", index=False)
+    # single = df.peakHHG()
+    # single.to_csv("single_peak.csv", index=False)
 
 # Loop over several different laser focal areas
-    for area in [0.01, 0.1, 1.5]:
+    for area in [0.1]:#[0.01, 0.1, 1.5]:
         # Write naive coherent average to file
-        n_coh = df.intensityAveragedHHG(focus=area, d=25, phase=False, I_min=I_min)
-        n_coh.to_csv(f"naive_coherent_area_{area}_step_1.csv",
-                     index=False)
+        # n_coh = df.intensityAveragedHHG(focus=area, d=25, phase=False, I_min=I_min)
+        # n_coh.to_csv(f"naive_coherent_area_{area}_step_1.csv",
+        #              index=False)
 
         # Write intermediate coherent average to file
-        f_coh = df.intensityAveragedHHG(focus=area, d=25, phase=True, I_min=I_min)
-        f_coh.to_csv(f"intermediate_coherent_area_{area}_step_1.csv",
-                     index=False)
+        # f_coh = df.intensityAveragedHHG(focus=area, d=25, phase=True, I_min=I_min)
+        # f_coh.to_csv(f"intermediate_coherent_area_{area}_step_1.csv",
+        #              index=False)
 
         # Write full coherent average accounting for detector to file
-        f_coh_det = df.intensityAveragedHHG(focus=area, R_detect=0.0005, d=25, phase=True, I_min=I_min)
+        f_coh_det = df.intensityAveragedHHG(no_cores=no_cores, focus=area, R_detect=0.0005, d=25, phase=True, I_min=I_min)
         f_coh_det.to_csv(f"full_coherent_area_{area}_step_1.csv",
                      index=False)
 
 # Changing intensity step 2x bigger, 5x bigger, 10x bigger
-    area=0.1
-    for stride in [2, 5, 10]:
-        df = DipoleFile(args['dipoleFile'])
+    # area=0.1
+    # for stride in [2, 5, 10]:
+    #     df = DipoleFile(args['dipoleFile'])
 
-        n_coh = df.intensityAveragedHHG(focus=area, d=25, phase=False, I_min=I_min,
-                                        stride=stride)
-        n_coh.to_csv(f"naive_coherent_area_0.1_step_{stride}.csv",
-                     index=False)
+    #     n_coh = df.intensityAveragedHHG(focus=area, d=25, phase=False, I_min=I_min,
+    #                                     stride=stride)
+    #     n_coh.to_csv(f"naive_coherent_area_0.1_step_{stride}.csv",
+    #                  index=False)
 
         # # Write intermediate coherent average to file
-        f_coh = df.intensityAveragedHHG(focus=area, d=25, phase=True, I_min=I_min,
-                                        stride=stride)
-        f_coh.to_csv(f"intermediate_coherent_area_0.1_step_{stride}.csv",
-                     index=False)
+        # f_coh = df.intensityAveragedHHG(focus=area, d=25, phase=True, I_min=I_min,
+        #                                 stride=stride)
+        # f_coh.to_csv(f"intermediate_coherent_area_0.1_step_{stride}.csv",
+        #              index=False)
 
     #     # Write full coherent average accounting for detector to file
-        f_coh_det = df.intensityAveragedHHG(focus=area, d=25, R_detect=0.0005, 
-                                            phase=True, I_min=I_min, stride=stride)
-        f_coh_det.to_csv(f"full_coherent_area_0.1_step_{stride}.csv",
-                     index=False)
+        # f_coh_det = df.intensityAveragedHHG(focus=area, d=25, R_detect=0.0005, 
+        #                                     phase=True, I_min=I_min, stride=stride)
+        # f_coh_det.to_csv(f"full_coherent_area_0.1_step_{stride}.csv",
+        #              index=False)
 
