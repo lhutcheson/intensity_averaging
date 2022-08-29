@@ -119,7 +119,7 @@ class DipoleFile(pd.DataFrame):
 
         a = (-2*np.pi*np.sqrt(r_sq)*R_detect)/(d*L)
         a = round(max(abs(a)))
-        pre_factor = np.exp((np.pi*1j*(R_detect**2 + r_sq))/(d*L))
+        pre_factor = np.exp((np.pi*1j*(R_detect**2))/(d*L))
 
         term =0
         for l in range(0, 2*a, 2):
@@ -234,11 +234,11 @@ if __name__ == "__main__":
 
 
 # Write peak intensity spectra to file
-    # single = df.peakHHG()
-    # single.to_csv("single_peak.csv", index=False)
+    single = df.peakHHG()
+    single.to_csv("single_peak.csv", index=False)
 
 # Loop over several different laser focal areas
-    for area in [0.1]:#[0.01, 0.1, 1.5]:
+    # for area in [0.1]:#[0.01, 0.1, 1.5]:
         # Write naive coherent average to file
         # n_coh = df.intensityAveragedHHG(focus=area, d=25, phase=False, I_min=I_min)
         # n_coh.to_csv(f"naive_coherent_area_{area}_step_1.csv",
@@ -250,9 +250,9 @@ if __name__ == "__main__":
         #              index=False)
 
         # Write full coherent average accounting for detector to file
-        f_coh_det = df.intensityAveragedHHG(no_cores=no_cores, focus=area, R_detect=0.0005, d=25, phase=True, I_min=I_min)
-        f_coh_det.to_csv(f"full_coherent_area_{area}_step_1.csv",
-                     index=False)
+        # f_coh_det = df.intensityAveragedHHG(no_cores=no_cores, focus=area, R_detect=0.0005, d=25, phase=True, I_min=I_min)
+        # f_coh_det.to_csv(f"full_coherent_area_{area}_step_1.csv",
+        #              index=False)
 
 # Changing intensity step 2x bigger, 5x bigger, 10x bigger
     # area=0.1
