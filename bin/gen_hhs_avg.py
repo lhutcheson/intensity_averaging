@@ -84,15 +84,14 @@ class DipoleFile(pd.DataFrame):
         return np.concatenate([np.zeros(pre), np.transpose(ydat),
                                np.zeros(post)])
 
-    def peakHHG(self):
-        df = self._FFT(collim=1)
-        col = df.columns[1]
-        amplitude = np.real(np.abs(df[col].values)**2)
-        amplitude = amplitude * df["Freq"]**self.scalefactor
+    def genHHG(self):
+        df = self._FFT()
+        for col in df.columns[1:]:
+            amplitude = np.real(np.abs(df[col].values)**2)
+            amplitude = amplitude * df["Freq"]**self.scalefactor
+            df[col] = amplitude
         df["Freq"] *= 27.212  # convert frequency to eV
-        df[col] = amplitude
-        newdf = df[["Freq", col]]
-        return newdf
+        return df
 
     def _weights(self, I, I0, w0):
         """calculate the weights for gaussian laser beam in 2D configuration"""
@@ -220,16 +219,15 @@ if __name__ == "__main__":
     df = DipoleFile(args['dipoleFile'])
 
 
-# Write peak intensity spectra to file
-    single = df.peakHHG()
-    single.to_csv("single_peak.csv", index=False)
+# Write spectra at each intensity to file
+    single = df.genHHG()
+    single.to_csv("all_harm.csv", index=False)
+
+    n_coh = df.intensityAveragedHHG(no_cores = 1, focus=0.01, d=25, I_min=I_min)
+    n_coh.to_csv(f"naive_step_1.csv", index=False)
 
 # Loop over several different laser focal areas
-    for area in [0.01, 0.05, 0.1]:
-        # Write naive coherent average to file
-        n_coh = df.intensityAveragedHHG(no_cores = 1, focus=area, d=25, I_min=I_min)
-        n_coh.to_csv(f"naive_step_1.csv",
-                     index=False)
+    for area in [0.01, 0.03, 0.05, 0.07, 0.09, 0.1]:
 
         # Write full coherent average accounting for detector to file
         f_coh_det = df.intensityAveragedHHG(no_cores=no_cores, focus=area, R_detect=0.0005, d=25, I_min=I_min)
@@ -237,8 +235,8 @@ if __name__ == "__main__":
                      index=False)
 
 # Changing intensity step 2x bigger, 5x bigger, 10x bigger
-    area=0.1
-    for stride in [2, 5, 10]:
+    area=0.05
+    for stride in [2, 5, 10, 12]:
         df = DipoleFile(args['dipoleFile'])
 
         n_coh = df.intensityAveragedHHG(no_cores=1, focus=area, d=25, I_min=I_min,
