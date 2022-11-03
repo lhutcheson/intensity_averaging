@@ -170,8 +170,6 @@ class DipoleFile(pd.DataFrame):
 
                 summed += weight * dI * df[col]
 
-            summed *= pre_factor
-
             avg = np.real(np.abs(summed)**2)*w**self.scalefactor
             newdf = pd.DataFrame({"Freq": w*27.212, "0001_z": avg})
         
