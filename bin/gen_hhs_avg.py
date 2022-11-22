@@ -205,6 +205,9 @@ def read_command_line():
     parser.add_argument('-p', '--parallel', type=int, default=1,
                         help='option to run the code in parallel'
                         'and select the number of cores used')
+    parser.add_argument('-z', '--length_form',
+                        help="use the dipole expectation value in length form",
+                        action='store_true', default=False)
     return vars(parser.parse_args())
 
 # --------------------------------------------------------------------------------
@@ -214,7 +217,11 @@ if __name__ == "__main__":
     I_min = args["minimum_intensity"]
     no_cores = args['parallel']
 
-    df = DipoleFile(args['dipoleFile'])
+    if args['length_form']:
+        df = DipoleFile(args['dipoleFile'], form="z")
+    else:
+        df = DipoleFile(args['dipoleFile'])
+
 
 
 # Write spectra at each intensity to file
